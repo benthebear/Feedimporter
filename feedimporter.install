@@ -1,0 +1,55 @@
+<?php
+/* $Id: feedimporter.install,v 1.1 2008/02/18 16:47:36 sanduhrs Exp $ */
+
+/**
+ * Implementation of hook_install().
+ */
+function feedimporter_install() {
+	drupal_install_schema('feedimporter');
+}
+
+/**
+ * Implementation of hook_uninstall().
+ */
+function feedimporter_uninstall() {
+  cache_clear_all('feedimporter', 'cache', TRUE);
+  drupal_uninstall_schema('feedimporter');
+  variable_del("feedimporter_delicious");
+  variable_del("feedimporter_magnolia");
+}
+
+/**
+ * Implementation of hook_schema().
+ */
+
+function feedimporter_schema() {
+  $schema['feedimporter'] = array(
+    'description' => t('Stores URLs.'),
+    'fields' => array(
+      'urlid' => array(
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => t('Primary Key: URL ID.'),
+      ),
+      'nid' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => t('The NodeID of the Node.'),
+      ),  
+      
+      'url' => array(
+        'type' => 'text',
+        'not null' => FALSE,
+        'size' => 'normal',
+        'description' => t('The URL of the Item.'),
+      ),      
+     
+    ),
+    'primary key' => array('urlid'),
+    'indexes' => array('feedimporter_nid' => array('nid')),
+  );
+  return $schema;
+}

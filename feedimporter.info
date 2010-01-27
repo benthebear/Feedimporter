@@ -1,0 +1,9 @@
+; $Id:  $
+name = Feedimporter
+description = A Meta Module for Creating RSS-Feed-Items to nodes
+package = Other
+version = VERSION
+core = 6.x
+
+
+

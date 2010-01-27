@@ -1,0 +1,740 @@
+<?php 
+/**
+ * @author Benjamin Birkenhake <benjamin@birkenhake.org>
+ */
+
+
+/**
+ * Installation:
+ * 
+ * 1. Activete Module
+ * 2. Setup Bookmark-Node-Type as you prefer: 
+ * 		admin/content/node-type/bookmark
+ * 3. You might want to add a Tags Vocabulary to your node type?
+ * 		admin/content/taxonomy
+ * 4. Setup the Feedimporter Settings:
+ * 		admin/settings/feedimporter
+ * 
+ * 5. Run the Cron.php to import your Bookmarks, or
+ * 6. Add a bookmark by creating a bookmark content
+ * 		node/add/bookmark
+ * 
+ */
+
+
+/**
+ * History:
+ * 
+ * 20080520: Started working on the module
+ * 20080525: Added Googel Reader Shared Feed Support * 
+ * 20080526: Added Block
+ * 20080526: Added Watchdog
+ * 20080526: Wrote Installation and Documentation
+ * 20080526: Launched v. 0.9 on my Blog. 
+ * 
+ */
+
+/**
+ * ToDos:
+ * 
+ * # Add Multiuser Support
+ * # Add Girafa Support
+ * 
+ * 
+ */
+
+
+/**
+ * Implementation of hook_menu
+ *
+ * @return array $items
+ */
+function feedimporter_menu() {
+	$items['admin/settings/feedimporter'] = array(
+	'title' => t('Feedimporter settings'),
+	'description' =>  t("Setup Feeds for Feedimporter"),
+	'page callback' => 'drupal_get_form',
+	'page arguments' => array('feedimporter_admin_settings'),
+	'access arguments' => array('administer feedimporter'),
+	'menu_name' => 'Feedimporter',
+	);
+	return $items;
+}
+
+function feedimporter_perm() {
+	return array(
+	'administer feedimporter',
+	);
+}
+
+
+/**
+ * Implementation of hook_node_info
+ *
+ * @return array
+ */
+function feedimporter_node_info(){
+	return array(
+	'bookmark' => array(
+	'name' => t('Bookmark'),
+	'module' => 'feedimporter',
+	'description' => t("A Bookmark is Post that is generated from an RSS Feed Item."),
+	'locked' => FALSE,
+	)
+	);
+
+}
+
+/**
+ * The Cron Job is the main Entrance to the Module
+ *
+ */
+function feedimporter_cron(){
+	// Import the different Bookmarks
+	$counter_delicious 									= feedimporter_delicious_import();
+	$counter_magnolia 									= feedimporter_magnolia_import();
+	$counter_goolereadershared_counter 	= feedimporter_googlereadershared_import();
+
+	// Sum up the imported Bookmarks
+	$counter = $counter_delicious + $counter_magnolia + $counter_goolereadershared_counter;
+	watchdog("feedimporter", "Imported ".$counter." Bookmarks");
+}
+
+
+function feedimporter_delicious_import(){
+	$counter = 0;
+	$url = variable_get('feedimporter_delicious', " ");
+	if($url!=" " and $url!="" and $url!="yourUserName"){
+		$response = drupal_http_request("http://feeds.delicious.com/rss/".$url);
+		$cleanstring = feedimporter_delicious_clean_xml($response->data);
+		$sxml = simplexml_load_string($cleanstring);
+
+		//dprint_r($sxml);
+		$objects = feedimporter_delicious_sxml2items($sxml);
+		//dprint_r($objects);
+		foreach ($objects as$object) {
+			if(!feedimporter_url_exists($object->url)){
+				$node = feedimporter_create_node($object);
+				$node = feedimporter_makemynode($node);
+				$counter ++;
+			}
+		}
+	}
+	return $counter;
+}
+
+/**
+ * Remove the f*cking Namespaces
+ *
+ * @param string $string
+ * @return string
+ */
+function feedimporter_delicious_clean_xml($string){
+	$namespace[] = "dc";
+	$namespace[] = "rdf";
+	$namespace[] = "cc";
+	$namespace[] = "content";
+	$namespace[] = "taxo";
+	$namespace[] = "syn";
+	$namespace[] = "admin";
+	foreach ($namespace as $ns){
+		$string = ereg_replace("<".$ns.":", "<", $string);
+		$string = ereg_replace("</".$ns.":", "</", $string);
+	}
+	return $string;
+}
+
+
+
+function feedimporter_delicious_sxml2items($sxml){
+	$items = array() ;
+	foreach ($sxml->item as $item){
+		$new->title = "".$item->title."";
+		$new->text = "".$item->description."";
+		$new->url = "".$item->link."";
+		$new->created = strtotime("".$item->date."");
+		foreach ($item->topics->Bag->li as $tag){
+			$new->tags[] = substr("".$tag['resource'], 23);
+		}
+		$items[] = $new;
+		unset($new);
+	}
+	return $items;
+}
+
+
+
+function feedimporter_magnolia_import(){
+	$counter = 0;
+
+	$url = variable_get('feedimporter_magnolia', " ");
+	if($url!=" " and $url!="" and $url!="yourUserName"){
+		$response = drupal_http_request("http://ma.gnolia.com/rss/full/people/".$url);
+		$cleanstring = feedimporter_magnolia_clean_xml($response->data);
+		$sxml = simplexml_load_string($cleanstring);
+
+		//dprint_r($sxml);
+		$objects = feedimporter_magnolia_sxml2items($sxml);
+		//dprint_r($objects);
+		foreach ($objects as$object) {
+			if(!feedimporter_url_exists($object->url)){
+				$node = feedimporter_create_node($object);
+				$node = feedimporter_makemynode($node);
+				$counter ++;
+			}
+		}
+	}
+	return $counter;
+}
+
+/**
+ * Remove the f*cking Namespaces
+ *
+ * @param string $string
+ * @return string
+ */
+function feedimporter_magnolia_clean_xml($string){
+	$namespace[] = "dc";
+	$namespace[] = "creativeCommons";
+
+	foreach ($namespace as $ns){
+		$string = ereg_replace("<".$ns.":", "<", $string);
+		$string = ereg_replace("</".$ns.":", "</", $string);
+	}
+	return $string;
+}
+
+
+
+function feedimporter_magnolia_sxml2items($sxml){
+	$items = array() ;
+	foreach ($sxml->channel->item as $item){
+		$new->title = "".$item->title."";
+		$text = "".$item->description."";
+		// Make those Magnolia Extras accessible via CSS
+		$text = ereg_replace("<p><a href", "<p class='magnolia_thumb'><a href", $text);
+		$text = ereg_replace("<p>Saved By:", "<p class='magnolia_links'>Saved By:", $text);
+		$text = ereg_replace("<p><strong>Tags:", "<p class='magnolia_tags'><strong>Tags:", $text);
+		$new->text = $text;
+		$new->url = "".$item->link."";
+		$new->created = strtotime("".$item->pubDate."");
+		foreach ($item->category as $tag){
+			$new->tags[] = "".$tag."";
+		}
+		$items[] = $new;
+		unset($new);
+	}
+	return $items;
+}
+
+
+function feedimporter_googlereadershared_import(){
+	$counter;
+
+	$url = variable_get('feedimporter_googlereadershared', " ");
+	if($url!=" " and $url!="" and $url!="yourID"){
+		$response = drupal_http_request("http://www.google.com/reader/public/atom/user/$url/state/com.google/broadcast");
+		$cleanstring = feedimporter_googlereadershared_clean_xml($response->data);
+		$sxml = simplexml_load_string($cleanstring);
+
+		//dprint_r($sxml);
+		$objects = feedimporter_googlereadershared_sxml2items($sxml);
+		//dprint_r($objects);
+		foreach ($objects as$object) {
+			if(!feedimporter_url_exists($object->url)){
+				$node = feedimporter_create_node($object);
+				$node = feedimporter_makemynode($node);
+				$counter ++;
+			}
+		}
+	}
+	return $counter;
+}
+
+/**
+ * Remove the f*cking Namespaces
+ *
+ * @param string $string
+ * @return string
+ */
+function feedimporter_googlereadershared_clean_xml($string){
+	$namespace[] = "gr";
+	$namespace[] = "media";
+
+	foreach ($namespace as $ns){
+		$string = ereg_replace("<".$ns.":", "<", $string);
+		$string = ereg_replace("</".$ns.":", "</", $string);
+	}
+	return $string;
+}
+
+
+
+function feedimporter_googlereadershared_sxml2items($sxml){
+	$items = array() ;
+	foreach ($sxml->entry as $item){
+		$new->title = "".$item->title."";
+		$text = "".$item->annotation->content."";
+		// Make those Magnolia Extras accessible via CSS
+		$new->text = $text;
+		$url = "".$item->link['href']."";
+		if(	substr($url, 0, 31) 	== "http://feeds.feedburner.com/~r/" 
+			or substr($url, 0, 31) 	== "http://feedproxy.google.com/~r/"){
+			$url = feedimporter_get_redirect($url);
+		}
+		$new->url = $url;
+		$new->created = strtotime("".$item->published."");
+		$new->tags = array();
+		/*
+		foreach ($item->category as $tag){
+		$new->tags[] = "".$tag['term']."";
+		}*/
+		$items[] = $new;
+		unset($new);
+	}
+	return $items;
+}
+
+
+
+function feedimporter_url_exists($url){
+	$url = trim($url);
+	if($url!="" and $url !=" "){
+		$count = db_fetch_object(db_query("SELECT COUNT(url) as ammount FROM {feedimporter} WHERE (url='%s')", $url));
+		//print_r($count);
+		if($count->ammount=="0"){
+			return false;
+		}else{
+			return true;
+		}
+	}else{
+		return true;
+	}
+}
+
+/**
+ * Create a feedimporter Node Array for further from an Mail Array
+ *
+ * @param array $mail
+ * @return array $node
+ */
+function feedimporter_create_node($item) {
+
+	$node = array();
+	$node['type'] = 'bookmark';
+	// define the default node
+	$node["uid"] = variable_get("feedimporter_uid", "1");
+	$node['title'] = "".$item->title."";
+
+	// Create the body
+	$body = "".$item->text."";
+	$node['body'] = $body;
+
+	$node["url"] = $item->url;
+
+	if(count($item->tags)>0){
+		$node['taxonomy']['tags'][variable_get("feedimporter_tags", "1")] = implode(", ", $item->tags);
+	}
+
+	// Creating Times
+	$date = $item->created;
+	$node['created'] = $date;
+	$node['changed'] = time();
+	$node['timestamp'] = $date;
+
+	// Setting Node-Types' Default Values:
+	// Format
+	$node['format'] = 2;
+	$type = node_get_types("type", $node);
+	$options = variable_get('node_options_'. $type->type, array('status', 'promote'));
+
+	// Default Comment Options
+	$node['comment'] = variable_get("comment_feedimporter", 2);
+	// Defautl Promote Options
+	if(in_array("promote", $options)){
+		$node['promote'] = 1;
+	}else {
+		$node['promote'] = 0;
+	}
+	// Default Status Options
+	if(in_array("status", $options)){
+		$node['status'] = 1;
+	}else {
+		$node['status'] = 0;
+	}
+	return $node;
+
+}
+
+
+/**
+ * Actually create the Item Node from a Node Array
+ *
+ * @param array $node
+ * @return object $node
+ */
+function feedimporter_makemynode($node){
+	$date = $node["created"];
+	$node = node_submit($node);
+	$node->uid = "1";
+	$node->created = $date;
+	$node->changed = time();
+	$node->timestamp = $date;
+	node_save($node);
+	$node->feedimporter[0] = $node->url;
+	feedimporter_insert_url($node);
+	feedimporter_sendmail_bookmar($node);
+	return $node;
+}
+
+function feedimporter_sendmail_bookmar($node){
+	global $base_url;
+
+	// Loading the origianl Node and its User
+	$owner = user_load($node->uid);
+
+
+	// Building the Mails Body
+	$body = "";
+	$body .= "Dear ".$owner->name.",\n\n";
+	$body .= "A new Bookmark has been imported. \n";
+	$body .= "\n";
+	$body .= $node->title."\n";
+	$body .= strip_tags($node->body)."\n";
+	$body .= "\n";
+	$body .= "View Node: ".$base_url."/node/".$node->nid."\n";
+	$body .= "Edit Node: ".$base_url."/node/".$node->nid."/edit \n";
+	$body .= "\n";
+	$body .= "Caution!!! Delete Comment: ".$base_url."/comment/delete/".$a1["cid"]."\n";
+
+	// Building the Messages Array
+	$message['id'] = "notifier_comment";
+	$message['to'] = $owner->mail;
+	$message['subject'] = "[".variable_get("site_name", "Drupal")."] Imported a new Bookmark: '".$node->title."'";
+	$message['body'] = $body;
+	$message['headers'] = array("from" => variable_get("site_name", "Drupal")."<".variable_get("site_mail", "mail@example.com").">");
+
+	// Send the Message
+	drupal_mail_send($message);
+}
+
+/**
+ * Implementation of hook_form().
+ *
+ * Now it's time to describe the form for collecting the information
+ * specific to this node type. This hook requires us to return an array with
+ * a sub array containing information for each element in the form.
+ */
+function feedimporter_form(&$node) {
+	// The site admin can decide if this node type has a title and body, and how
+	// the fields should be labeled. We need to load these settings so we can
+	// build the node form correctly.
+	$type = node_get_types('type', $node);
+
+	if ($type->has_title) {
+		$form['title'] = array(
+		'#type' => 'textfield',
+		'#title' => check_plain($type->title_label),
+		'#required' => TRUE,
+		'#default_value' => $node->title,
+		'#weight' => -5
+		);
+	}
+
+	if ($type->has_body) {
+		// In Drupal 6, we can use node_body_field() to get the body and filter
+		// elements. This replaces the old textarea + filter_form() method of
+		// setting this up. It will also ensure the teaser splitter gets set up
+		// properly.
+		$form['body_field'] = node_body_field($node, $type->body_label, $type->min_word_count);
+	}
+
+
+
+	return $form;
+}
+
+/**
+ * Implementation of hook_form_alter().
+ * 
+ * This functions does two things:
+ * 
+ * 1. Add a Field for the teaser images url into the node form
+ * 
+ * 2. Add an option wether a node-type allows feedimporters, or not
+ */
+function feedimporter_form_alter(&$form, $form_state, $form_id) {
+	// If the Form is a node/add or  node/edit form AND if the feedimporters are enabled for that nodetype the form is altered
+	if (isset($form['type']) and variable_get("feedimporter_".$form["type"]["#value"], 0) == 1) {
+		//print_r($form);
+		$form['feedimporter'] = array(
+		'#type' => 'fieldset',
+		'#title' => t('Bookmark URL'),
+		'#collapsible' => TRUE,
+		'#collapsed' => TRUE,
+		);
+
+		$node = $form['#node'];
+		$form['feedimporter'][] = array(
+		'#type' => 'textfield',
+		'#title' => t('URL'),
+		'#default_value' => isset($node->feedimporter) ? $node->feedimporter : '',
+		'#size' => '1056'
+		);
+		$form['feedimporter']['#weight'] = 1;
+		$form['feedimporter']['#tree'] = TRUE;
+
+	}elseif($form_id == 'node_type_form' && isset($form['identity']['type'])){
+		/*
+		I just have to alter the node-type-form in order to save the variables.
+		Drupal automatically saves it under "feedimporter_".type_of_the_node
+
+		*/
+		$form['feedimporter'] = array(
+		'#type' => 'fieldset',
+		'#title' => t('Feedimporter settings'),
+		'#collapsible' => TRUE,
+		'#collapsed' => FALSE,
+		);
+		$form['feedimporter']['feedimporter'] = array(
+		'#type' => 'radios',
+		'#title' => t('Feedimporter integration'),
+		'#default_value' => variable_get('feedimporter_'. $form['#node_type']->type, 1),
+		'#options' => array(t('URL disabled'), t('URL enabled')),
+		'#description' => t('Should a feedimporter be enabled on this nodetype?'),
+		);
+	}
+
+	$form['attachments']['#weight'] = 1;
+}
+
+/**
+ * Implementation of hook_nodeapi().
+ */
+function feedimporter_nodeapi($node, $op, $a3 = NULL, $a4 = NULL) {
+	if(variable_get("feedimporter_".$node->type,0)==1){
+		switch ($op) {
+
+			case 'load':
+				$output['feedimporter'] = feedimporter_get_url($node);
+				return $output;
+
+			case 'view':
+				if($node->type=="bookmark"){
+					drupal_add_css(drupal_get_path('module', 'feedimporter') .'/feedimporter.css');
+					$url = feedimporter_get_url($node);
+					$domain = feedimporter_get_domain($url);
+					if($domain==""){
+						$domain = t("Bookmark");
+					}
+					$node->title = $domain.": ".$node->title."";
+					if($a4!=NULL){
+						drupal_set_title($node->title);
+					}
+					if($url!="" and $a4!=NULL){
+						$node->content['feedimporter'] = array(
+						'#value' => "<p class='bookmarkUrl'>".$domain.": <a href='".$url."'>$url</p>",
+						'#weight' => 10,
+						);
+					}
+					//dprint_r($node);
+				}
+				break;
+
+			case 'insert':
+				if (!empty($node->feedimporter)) {
+					feedimporter_insert_url($node);
+				}
+				break;
+
+			case 'update':
+				if (!empty($node->feedimporter)) {
+					feedimporter_update_url($node, $node->feedimporter);
+				}
+				break;
+
+			case 'delete':
+				feedimporter_delete_url($node);
+				break;
+
+				// Adding the feedimporter to the RSS Feed.
+				/*
+				case "rss item":
+				if(!(empty($node->feedimporter)or $node->feedimporter == feedimporter_get_default())){
+				$node->body = "<img src='".$node->feedimporter."' style='width:100px; padding:1px; margin:0 1em 1em 0; border:1px solid black; float:left;' width='100px;'>".$node->body;
+				}else{
+				return array();
+				}
+				break;
+				*/
+		}
+	}
+}
+
+/**
+ * Implementation of hook_node_type().
+ *
+ * This is just to delete the Setting, wether a node type allows teaser-images or not,
+ * if the node-type is deleted
+ */
+function feedimporter_node_type($op, $info) {
+	switch ($op) {
+		case 'delete':
+			variable_del('feedimporter_'. $info->type);
+			break;
+	}
+}
+
+function feedimporter_insert_url($node){
+	// Only if the feedimporter is not the default Value
+	if($node->feedimporter[0]!= ""){
+		db_query("INSERT INTO {feedimporter} (nid, url) VALUES (%d, '%s')", $node->nid, $node->feedimporter[0]);
+	}
+}
+
+function feedimporter_update_url($node){
+	feedimporter_delete_url($node);
+	feedimporter_insert_url($node);
+}
+
+function feedimporter_delete_url($node){
+	db_query("DELETE FROM {feedimporter} WHERE nid=%d", $node->nid);
+}
+
+function feedimporter_get_url($node){
+	$result = db_fetch_object(db_query("SELECT url FROM {feedimporter} WHERE (nid=%d)", $node->nid));
+	if(!isset($result->url) or $result->url==""){
+		return NULL;
+	}else{
+		return $result->url;
+	}
+}
+
+function feedimporter_admin_settings(){
+	$form["feedimporter"] = array();
+
+	$form['feedimporter']['feedimporter_uid'] = array('#type' => 'textfield',
+	'#title' => t('Drupal User ID'),
+	'#default_value' => variable_get('feedimporter_uid', "1"),
+	'#size' => 50,
+	'#maxlength' => 512,
+	'#description' => t('Enter an Id of a user of this installation.'),
+	);
+
+	$form['feedimporter']['feedimporter_tags'] = array('#type' => 'textfield',
+	'#title' => t('Drupal Tags Vocabulary ID'),
+	'#default_value' => variable_get('feedimporter_tags', "1"),
+	'#size' => 50,
+	'#maxlength' => 512,
+	'#description' => t('Enter the ID of the Tags Vocabulary of this installation.'),
+	);
+
+	$form['feedimporter']['feedimporter_delicious'] = array('#type' => 'textfield',
+	'#title' => t('Delicious Username'),
+	'#default_value' => variable_get('feedimporter_delicious', "yourUserName"),
+	'#size' => 50,
+	'#maxlength' => 512,
+	'#description' => t('Enter a user name like "yourname" from Feed-URL like "http://feeds.delicious.com/rss/yourname"'),
+	);
+
+	$form['feedimporter']['feedimporter_magnolia'] = array('#type' => 'textfield',
+	'#title' => t('Magnolia Feed'),
+	'#default_value' => variable_get('feedimporter_magnolia', "yourUserName"),
+	'#size' => 50,
+	'#maxlength' => 512,
+	'#description' => t('Enter a user name like "yourname" from Feed-URL like "http://ma.gnolia.com/rss/full/people/yourname"'),
+	);
+
+	$form['feedimporter']['feedimporter_googlereadershared'] = array('#type' => 'textfield',
+	'#title' => t('Google Reader ID'),
+	'#default_value' => variable_get('feedimporter_googlereadershared', "yourID"),
+	'#size' => 50,
+	'#maxlength' => 512,
+	'#description' => t('Enter an ID name like "yourID" from Feed-URL like "http://www.google.com/reader/public/atom/user/yourID/state/com.google/broadcast"'),
+	);
+
+	return system_settings_form($form);
+}
+
+/**
+ * Get ti finde the "real" source of a URL
+ * 
+ * Often URLs within RSS Feeds are redirected via http,
+ * for example, all feedburned feeds go via Via Feedburner first
+ *
+ * @param string $url The URL to be checked
+ * @return string Either the Redirection or the original URL
+ */
+function feedimporter_get_redirect($url){
+	$response = drupal_http_request($url);
+	if($response->redirect_url!=""){
+		return $response->redirect_url;
+	}else{
+		return $url;
+	}
+}
+
+function feedimporter_get_domain($url){
+	$domain = $url;
+	$domain = ereg_replace("http://www.", "", $domain);
+	$domain = ereg_replace("http://", "", $domain);
+	$domain = substr($domain, 0, strpos($domain, "/"));
+	return $domain;
+}
+
+function feedimporter_block($op = 'list', $delta = 0){
+	if ($op == 'list') {
+		$blocks[0]['info'] = t('Recent Bookmarks');
+		return $blocks;
+	}
+	else if ($op == 'view') {
+		drupal_add_css(drupal_get_path('module', 'feedimporter') .'/feedimporter.css');
+		$output = feedimporter_recent_bookmarks();
+		if($output){
+			$block['subject'] = t('Recent Bookmarks');
+			$block['content'] .= $output;
+		}else{
+			$output = NULL;
+		}
+		return $block;
+	}
+
+}
+
+//drupal_rebuild_theme_registry();
+
+function feedimporter_theme(){
+	return array(
+	'recent_bookmarks_block' => array(
+	'arguments' => array('items' => array()),
+	),
+
+	);
+}
+
+
+function feedimporter_recent_bookmarks(){
+	$output = "";
+	$sql = "SELECT n.nid, n.title, url FROM {node} AS n, {feedimporter} AS f WHERE n.nid = f.nid AND n.type='bookmark' AND n.status='1' ORDER BY n.created DESC LIMIT 15";
+	$result = db_query($sql);
+	$items = array();
+	while($item = db_fetch_array($result)){
+		$items[] = $item;
+	}
+	//print_r($items);
+	$output = theme("recent_bookmarks_block", $items);
+	//theme_item_list()
+
+	return $output;
+}
+
+
+function theme_recent_bookmarks_block($items){
+	foreach ($items as $item){
+		$newitems[] = feedimporter_get_domain($item["url"]).": ".l($item["title"], "node/".$item["nid"], array("absolute" => true));
+	}
+	$output = theme("item_list", $newitems);
+	return $output;
+}
+
+

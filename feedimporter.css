@@ -1,0 +1,11 @@
+.magnolia_links,
+.magnolia_tags,
+.magnolia_thumb {
+	display:none;
+}
+
+.bookmark h2.title, 
+#block-feedimporter-0 .first-row{
+	text-transform:capitalize;
+}
+
